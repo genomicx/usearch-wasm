@@ -9,6 +9,7 @@ SRCDIR="/work/src/src"
 OUTDIR="/work/build"
 PATCHDIR="/work/patches"
 
+rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR"
 
 # --- Apply patches ---

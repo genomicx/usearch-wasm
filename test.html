@@ -17,8 +17,6 @@
   label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 4px; }
   select, input, textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-family: monospace; font-size: 0.85rem; margin-bottom: 10px; }
   textarea { min-height: 120px; resize: vertical; }
-  .row { display: flex; gap: 12px; flex-wrap: wrap; }
-  .row > * { flex: 1; min-width: 120px; }
   button { padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d; background: #238636; color: #fff; font-size: 0.9rem; cursor: pointer; font-weight: 600; }
   button:hover { background: #2ea043; }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -41,10 +39,10 @@
 <div class="panel">
   <h2>Quick Tests</h2>
   <div class="tests">
-    <button onclick="runTest('help')">Show Help</button>
-    <button onclick="runTest('cluster')">cluster_fast</button>
-    <button onclick="runTest('uniques')">fastx_uniques</button>
-    <button onclick="runTest('orient')">fastx_orient</button>
+    <button onclick="runTest('help')" class="test-btn">Show Help</button>
+    <button onclick="runTest('cluster')" class="test-btn">cluster_fast</button>
+    <button onclick="runTest('uniques')" class="test-btn">fastx_uniques</button>
+    <button onclick="runTest('orient')" class="test-btn">fastx_orient</button>
   </div>
 </div>
 
@@ -69,158 +67,154 @@ GCTAGCTAGCTA"></textarea>
   <div id="output" class="output"><span class="info">Waiting for module to load...</span></div>
 </div>
 
-<script type="module">
-import createUsearch from './build/usearch.js';
+<script src="./build/usearch.js"></script>
+<script>
+// createUsearch is now available as a global from the script above
 
-let moduleFactory = createUsearch;
-let moduleReady = false;
-
-// Pre-load to verify it works
-try {
-  const testModule = await createUsearch({
-    noInitialRun: true,
-    print: () => {},
-    printErr: () => {},
-  });
-  moduleReady = true;
-  document.getElementById('status').className = 'status ready';
-  document.getElementById('status').textContent = 'Module loaded — ready to run commands';
-  document.getElementById('runBtn').disabled = false;
-  document.getElementById('output').innerHTML = '<span class="info">Module loaded. Click a quick test or enter a custom command.</span>';
-} catch (e) {
-  document.getElementById('status').className = 'status error';
-  document.getElementById('status').textContent = 'Failed to load WASM module: ' + e.message;
-  document.getElementById('output').innerHTML = '<span class="stderr">' + e.stack + '</span>';
-}
-
-async function freshModule() {
-  const stdout = [];
-  const stderr = [];
-  const Module = await moduleFactory({
-    noInitialRun: true,
-    print: (t) => stdout.push(t),
-    printErr: (t) => stderr.push(t),
-  });
-  return { Module, stdout, stderr };
-}
+var moduleReady = false;
 
 function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-function renderOutput(stdout, stderr, files = {}) {
-  const out = document.getElementById('output');
-  let html = '';
+function renderOutput(stdout, stderr, files) {
+  var out = document.getElementById('output');
+  var html = '';
   if (stderr.length) {
     html += '<span class="stderr">' + escapeHtml(stderr.join('\n')) + '</span>\n';
   }
   if (stdout.length) {
     html += '<span class="stdout">' + escapeHtml(stdout.join('\n')) + '</span>\n';
   }
-  for (const [name, content] of Object.entries(files)) {
+  for (var name in files) {
     html += '\n<span class="info">--- ' + escapeHtml(name) + ' ---</span>\n';
-    html += '<span class="stdout">' + escapeHtml(content) + '</span>\n';
+    html += '<span class="stdout">' + escapeHtml(files[name]) + '</span>\n';
   }
   if (!html) html = '<span class="info">Command completed with no output.</span>';
   out.innerHTML = html;
 }
 
-const TEST_FASTA = `>seq1
-ATCGATCGATCGATCGATCGATCGATCGATCG
->seq2
-ATCGATCGATCGATCGATCGATCGATCGATCG
->seq3
-GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA
->seq4
-ATCGATCGATCGATCGATCGAAAAAAAATCG
->seq5
-GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA
-`;
+function freshModule() {
+  var stdout = [];
+  var stderr = [];
+  return createUsearch({
+    noInitialRun: true,
+    print: function(t) { stdout.push(t); },
+    printErr: function(t) { stderr.push(t); },
+  }).then(function(Module) {
+    return { Module: Module, stdout: stdout, stderr: stderr };
+  });
+}
 
-window.runTest = async function(test) {
+var TEST_FASTA = [
+  '>seq1', 'ATCGATCGATCGATCGATCGATCGATCGATCG',
+  '>seq2', 'ATCGATCGATCGATCGATCGATCGATCGATCG',
+  '>seq3', 'GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA',
+  '>seq4', 'ATCGATCGATCGATCGATCGAAAAAAAATCG',
+  '>seq5', 'GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA',
+].join('\n') + '\n';
+
+function runTest(test) {
   if (!moduleReady) return;
   document.getElementById('output').innerHTML = '<span class="info">Running...</span>';
 
-  const { Module, stdout, stderr } = await freshModule();
-  const files = {};
+  freshModule().then(function(ctx) {
+    var Module = ctx.Module, stdout = ctx.stdout, stderr = ctx.stderr;
+    var files = {};
 
-  try {
-    switch (test) {
-      case 'help':
-        Module.callMain([]);
-        break;
+    try {
+      switch (test) {
+        case 'help':
+          Module.callMain([]);
+          break;
+        case 'cluster':
+          Module.FS.writeFile('/input.fasta', TEST_FASTA);
+          Module.callMain(['-cluster_fast', '/input.fasta', '-id', '0.9',
+            '-centroids', '/centroids.fasta', '-threads', '1', '-quiet']);
+          try { files['/centroids.fasta'] = Module.FS.readFile('/centroids.fasta', { encoding: 'utf8' }); } catch(e) {}
+          break;
+        case 'uniques':
+          Module.FS.writeFile('/input.fasta', TEST_FASTA);
+          Module.callMain(['-fastx_uniques', '/input.fasta',
+            '-fastaout', '/uniques.fasta', '-sizeout', '-threads', '1', '-quiet']);
+          try { files['/uniques.fasta'] = Module.FS.readFile('/uniques.fasta', { encoding: 'utf8' }); } catch(e) {}
+          break;
+        case 'orient':
+          Module.FS.writeFile('/input.fasta', TEST_FASTA);
+          Module.FS.writeFile('/ref.fasta', '>ref\nATCGATCGATCGATCGATCGATCGATCGATCG\n');
+          Module.callMain(['-orient', '/input.fasta', '-db', '/ref.fasta',
+            '-fastaout', '/oriented.fasta', '-threads', '1', '-quiet']);
+          try { files['/oriented.fasta'] = Module.FS.readFile('/oriented.fasta', { encoding: 'utf8' }); } catch(e) {}
+          break;
+      }
+    } catch (e) { /* exit throws */ }
 
-      case 'cluster':
-        Module.FS.writeFile('/input.fasta', TEST_FASTA);
-        Module.callMain(['-cluster_fast', '/input.fasta', '-id', '0.9',
-          '-centroids', '/centroids.fasta', '-threads', '1', '-quiet']);
-        try { files['/centroids.fasta'] = Module.FS.readFile('/centroids.fasta', { encoding: 'utf8' }); } catch(e) {}
-        break;
+    renderOutput(stdout, stderr, files);
+  });
+}
 
-      case 'uniques':
-        Module.FS.writeFile('/input.fasta', TEST_FASTA);
-        Module.callMain(['-fastx_uniques', '/input.fasta',
-          '-fastaout', '/uniques.fasta', '-sizeout', '-threads', '1', '-quiet']);
-        try { files['/uniques.fasta'] = Module.FS.readFile('/uniques.fasta', { encoding: 'utf8' }); } catch(e) {}
-        break;
-
-      case 'orient':
-        Module.FS.writeFile('/input.fasta', TEST_FASTA);
-        Module.FS.writeFile('/ref.fasta', '>ref\nATCGATCGATCGATCGATCGATCGATCGATCG\n');
-        Module.callMain(['-orient', '/input.fasta', '-db', '/ref.fasta',
-          '-fastaout', '/oriented.fasta', '-threads', '1', '-quiet']);
-        try { files['/oriented.fasta'] = Module.FS.readFile('/oriented.fasta', { encoding: 'utf8' }); } catch(e) {}
-        break;
-    }
-  } catch (e) { /* exit throws */ }
-
-  renderOutput(stdout, stderr, files);
-};
-
-window.runCustom = async function() {
+function runCustom() {
   if (!moduleReady) return;
   document.getElementById('output').innerHTML = '<span class="info">Running...</span>';
 
-  const { Module, stdout, stderr } = await freshModule();
+  var inputSeqs = document.getElementById('inputSeqs').value.trim();
+  var fileInput = document.getElementById('fileInput');
+  var argsStr = document.getElementById('cmdArgs').value.trim();
+  var args = argsStr.split(/\s+/).filter(function(a) { return a.length > 0; });
 
-  // Write input sequences if provided
-  const inputSeqs = document.getElementById('inputSeqs').value.trim();
-  if (inputSeqs) {
-    Module.FS.writeFile('/input.fasta', inputSeqs + '\n');
-  }
-
-  // Handle file upload
-  const fileInput = document.getElementById('fileInput');
+  var filePromise;
   if (fileInput.files.length > 0) {
-    const file = fileInput.files[0];
-    const buf = await file.arrayBuffer();
-    Module.FS.writeFile('/input.fasta', new Uint8Array(buf));
+    filePromise = fileInput.files[0].arrayBuffer();
+  } else {
+    filePromise = Promise.resolve(null);
   }
 
-  // Parse args
-  const argsStr = document.getElementById('cmdArgs').value.trim();
-  const args = argsStr.split(/\s+/).filter(a => a.length > 0);
+  filePromise.then(function(fileBuf) {
+    return freshModule().then(function(ctx) {
+      var Module = ctx.Module, stdout = ctx.stdout, stderr = ctx.stderr;
 
-  try {
-    Module.callMain(args);
-  } catch (e) { /* exit throws */ }
+      if (inputSeqs) {
+        Module.FS.writeFile('/input.fasta', inputSeqs + '\n');
+      }
+      if (fileBuf) {
+        Module.FS.writeFile('/input.fasta', new Uint8Array(fileBuf));
+      }
 
-  // Try to read any output files mentioned in args
-  const files = {};
-  const outFlags = ['-fastaout', '-fastqout', '-centroids', '-consout', '-tabbedout',
-    '-alnout', '-blast6out', '-uc', '-matched', '-notmatched', '-dbmatched',
-    '-dbnotmatched', '-output'];
-  for (let i = 0; i < args.length - 1; i++) {
-    if (outFlags.includes(args[i])) {
-      const fname = args[i + 1];
       try {
-        files[fname] = Module.FS.readFile(fname, { encoding: 'utf8' });
-      } catch (e) { /* file not created */ }
-    }
-  }
+        Module.callMain(args);
+      } catch (e) { /* exit throws */ }
 
-  renderOutput(stdout, stderr, files);
-};
+      var files = {};
+      var outFlags = ['-fastaout', '-fastqout', '-centroids', '-consout', '-tabbedout',
+        '-alnout', '-blast6out', '-uc', '-matched', '-notmatched', '-dbmatched',
+        '-dbnotmatched', '-output'];
+      for (var i = 0; i < args.length - 1; i++) {
+        if (outFlags.indexOf(args[i]) !== -1) {
+          try { files[args[i + 1]] = Module.FS.readFile(args[i + 1], { encoding: 'utf8' }); } catch(e) {}
+        }
+      }
+
+      renderOutput(stdout, stderr, files);
+    });
+  });
+}
+
+// Initialize
+createUsearch({
+  noInitialRun: true,
+  print: function() {},
+  printErr: function() {},
+}).then(function() {
+  moduleReady = true;
+  document.getElementById('status').className = 'status ready';
+  document.getElementById('status').textContent = 'Module loaded — ready to run commands';
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('output').innerHTML = '<span class="info">Module loaded. Click a quick test or enter a custom command.</span>';
+}).catch(function(e) {
+  document.getElementById('status').className = 'status error';
+  document.getElementById('status').textContent = 'Failed to load: ' + e.message;
+  document.getElementById('output').innerHTML = '<span class="stderr">' + e.message + '\n\nMake sure you are serving with COOP/COEP headers:\n  node serve.mjs</span>';
+});
 </script>
 
 </body>

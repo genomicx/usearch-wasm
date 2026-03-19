@@ -1,11 +1,13 @@
 // Test usearch12 WASM build in Node.js
+import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const buildDir = join(__dirname, 'build');
+const require = createRequire(import.meta.url);
 
-const createUsearch = (await import(join(buildDir, 'usearch.js'))).default;
+const createUsearch = require(join(buildDir, 'usearch.js'));
 
 async function createModule() {
   const stdout = [];
@@ -52,7 +54,7 @@ GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA
   try {
     const out = Module.FS.readFile('/centroids.fasta', { encoding: 'utf8' });
     console.log(out);
-    console.log('PASS: cluster_fast produced 3 centroids from 5 sequences');
+    console.log('PASS: cluster_fast produced centroids');
   } catch (e) {
     console.log('FAIL:', e.message);
     console.log(stderr.join('\n'));
