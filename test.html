@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>usearch12 WASM Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #0d1117; color: #c9d1d9; padding: 24px; }
+  h1 { font-size: 1.4rem; margin-bottom: 16px; color: #58a6ff; }
+  .status { padding: 8px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 0.9rem; }
+  .status.loading { background: #161b22; border: 1px solid #30363d; }
+  .status.ready { background: #0d2818; border: 1px solid #238636; color: #3fb950; }
+  .status.error { background: #2d1114; border: 1px solid #da3633; color: #f85149; }
+  .panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 1rem; color: #8b949e; margin-bottom: 12px; }
+  label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 4px; }
+  select, input, textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-family: monospace; font-size: 0.85rem; margin-bottom: 10px; }
+  textarea { min-height: 120px; resize: vertical; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 120px; }
+  button { padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d; background: #238636; color: #fff; font-size: 0.9rem; cursor: pointer; font-weight: 600; }
+  button:hover { background: #2ea043; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .output { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.82rem; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto; line-height: 1.5; }
+  .output .stderr { color: #f0883e; }
+  .output .stdout { color: #c9d1d9; }
+  .output .info { color: #58a6ff; }
+  .tests { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tests button { background: #21262d; font-size: 0.8rem; padding: 6px 12px; }
+  .tests button:hover { background: #30363d; }
+  .file-upload { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .file-upload input[type=file] { border: none; padding: 0; }
+</style>
+</head>
+<body>
+
+<h1>usearch12 — WebAssembly</h1>
+<div id="status" class="status loading">Loading WASM module...</div>
+
+<div class="panel">
+  <h2>Quick Tests</h2>
+  <div class="tests">
+    <button onclick="runTest('help')">Show Help</button>
+    <button onclick="runTest('cluster')">cluster_fast</button>
+    <button onclick="runTest('uniques')">fastx_uniques</button>
+    <button onclick="runTest('orient')">fastx_orient</button>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Custom Command</h2>
+  <div class="file-upload">
+    <label style="margin:0;white-space:nowrap;">Upload FASTA/FASTQ:</label>
+    <input type="file" id="fileInput" accept=".fasta,.fa,.fna,.fastq,.fq,.gz">
+  </div>
+  <label>Command arguments (one per line or space-separated):</label>
+  <input type="text" id="cmdArgs" placeholder="-cluster_fast /input.fasta -id 0.97 -centroids /out.fasta -threads 1 -quiet">
+  <label>Input sequences (written to /input.fasta):</label>
+  <textarea id="inputSeqs" placeholder=">seq1
+ATCGATCGATCG
+>seq2
+GCTAGCTAGCTA"></textarea>
+  <button id="runBtn" onclick="runCustom()" disabled>Run usearch</button>
+</div>
+
+<div class="panel">
+  <h2>Output</h2>
+  <div id="output" class="output"><span class="info">Waiting for module to load...</span></div>
+</div>
+
+<script type="module">
+import createUsearch from './build/usearch.js';
+
+let moduleFactory = createUsearch;
+let moduleReady = false;
+
+// Pre-load to verify it works
+try {
+  const testModule = await createUsearch({
+    noInitialRun: true,
+    print: () => {},
+    printErr: () => {},
+  });
+  moduleReady = true;
+  document.getElementById('status').className = 'status ready';
+  document.getElementById('status').textContent = 'Module loaded — ready to run commands';
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('output').innerHTML = '<span class="info">Module loaded. Click a quick test or enter a custom command.</span>';
+} catch (e) {
+  document.getElementById('status').className = 'status error';
+  document.getElementById('status').textContent = 'Failed to load WASM module: ' + e.message;
+  document.getElementById('output').innerHTML = '<span class="stderr">' + e.stack + '</span>';
+}
+
+async function freshModule() {
+  const stdout = [];
+  const stderr = [];
+  const Module = await moduleFactory({
+    noInitialRun: true,
+    print: (t) => stdout.push(t),
+    printErr: (t) => stderr.push(t),
+  });
+  return { Module, stdout, stderr };
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderOutput(stdout, stderr, files = {}) {
+  const out = document.getElementById('output');
+  let html = '';
+  if (stderr.length) {
+    html += '<span class="stderr">' + escapeHtml(stderr.join('\n')) + '</span>\n';
+  }
+  if (stdout.length) {
+    html += '<span class="stdout">' + escapeHtml(stdout.join('\n')) + '</span>\n';
+  }
+  for (const [name, content] of Object.entries(files)) {
+    html += '\n<span class="info">--- ' + escapeHtml(name) + ' ---</span>\n';
+    html += '<span class="stdout">' + escapeHtml(content) + '</span>\n';
+  }
+  if (!html) html = '<span class="info">Command completed with no output.</span>';
+  out.innerHTML = html;
+}
+
+const TEST_FASTA = `>seq1
+ATCGATCGATCGATCGATCGATCGATCGATCG
+>seq2
+ATCGATCGATCGATCGATCGATCGATCGATCG
+>seq3
+GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA
+>seq4
+ATCGATCGATCGATCGATCGAAAAAAAATCG
+>seq5
+GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA
+`;
+
+window.runTest = async function(test) {
+  if (!moduleReady) return;
+  document.getElementById('output').innerHTML = '<span class="info">Running...</span>';
+
+  const { Module, stdout, stderr } = await freshModule();
+  const files = {};
+
+  try {
+    switch (test) {
+      case 'help':
+        Module.callMain([]);
+        break;
+
+      case 'cluster':
+        Module.FS.writeFile('/input.fasta', TEST_FASTA);
+        Module.callMain(['-cluster_fast', '/input.fasta', '-id', '0.9',
+          '-centroids', '/centroids.fasta', '-threads', '1', '-quiet']);
+        try { files['/centroids.fasta'] = Module.FS.readFile('/centroids.fasta', { encoding: 'utf8' }); } catch(e) {}
+        break;
+
+      case 'uniques':
+        Module.FS.writeFile('/input.fasta', TEST_FASTA);
+        Module.callMain(['-fastx_uniques', '/input.fasta',
+          '-fastaout', '/uniques.fasta', '-sizeout', '-threads', '1', '-quiet']);
+        try { files['/uniques.fasta'] = Module.FS.readFile('/uniques.fasta', { encoding: 'utf8' }); } catch(e) {}
+        break;
+
+      case 'orient':
+        Module.FS.writeFile('/input.fasta', TEST_FASTA);
+        Module.FS.writeFile('/ref.fasta', '>ref\nATCGATCGATCGATCGATCGATCGATCGATCG\n');
+        Module.callMain(['-orient', '/input.fasta', '-db', '/ref.fasta',
+          '-fastaout', '/oriented.fasta', '-threads', '1', '-quiet']);
+        try { files['/oriented.fasta'] = Module.FS.readFile('/oriented.fasta', { encoding: 'utf8' }); } catch(e) {}
+        break;
+    }
+  } catch (e) { /* exit throws */ }
+
+  renderOutput(stdout, stderr, files);
+};
+
+window.runCustom = async function() {
+  if (!moduleReady) return;
+  document.getElementById('output').innerHTML = '<span class="info">Running...</span>';
+
+  const { Module, stdout, stderr } = await freshModule();
+
+  // Write input sequences if provided
+  const inputSeqs = document.getElementById('inputSeqs').value.trim();
+  if (inputSeqs) {
+    Module.FS.writeFile('/input.fasta', inputSeqs + '\n');
+  }
+
+  // Handle file upload
+  const fileInput = document.getElementById('fileInput');
+  if (fileInput.files.length > 0) {
+    const file = fileInput.files[0];
+    const buf = await file.arrayBuffer();
+    Module.FS.writeFile('/input.fasta', new Uint8Array(buf));
+  }
+
+  // Parse args
+  const argsStr = document.getElementById('cmdArgs').value.trim();
+  const args = argsStr.split(/\s+/).filter(a => a.length > 0);
+
+  try {
+    Module.callMain(args);
+  } catch (e) { /* exit throws */ }
+
+  // Try to read any output files mentioned in args
+  const files = {};
+  const outFlags = ['-fastaout', '-fastqout', '-centroids', '-consout', '-tabbedout',
+    '-alnout', '-blast6out', '-uc', '-matched', '-notmatched', '-dbmatched',
+    '-dbnotmatched', '-output'];
+  for (let i = 0; i < args.length - 1; i++) {
+    if (outFlags.includes(args[i])) {
+      const fname = args[i + 1];
+      try {
+        files[fname] = Module.FS.readFile(fname, { encoding: 'utf8' });
+      } catch (e) { /* file not created */ }
+    }
+  }
+
+  renderOutput(stdout, stderr, files);
+};
+</script>
+
+</body>
+</html>
